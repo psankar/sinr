@@ -37,8 +37,97 @@ type client struct {
 	Sinr   *sinr
 }
 
+func processSetCommand(args []string, c *client) {
+	if len(args) < 2 {
+		c.sendLine("-ERR syntax error\r\n")
+		return
+	}
+
+	pos := 2
+	var timeErr error
+	var duration int32
+
+	nx := false
+	xx := false
+	cleanup := false
+
+	if len(args) > 2 {
+		if args[pos] == "EX" || args[pos] == "PX" {
+
+			if len(args) < 4 {
+				c.sendLine("-ERR syntax error\r\n")
+				return
+			}
+
+			cleanup = true
+			var d int64
+			d, timeErr = strconv.ParseInt(args[pos+1], 10, 32)
+			if timeErr != nil {
+				c.sendLine("-ERR syntax error\r\n")
+				return
+			}
+			duration = int32(d)
+
+			if args[pos] == "EX" {
+				duration = duration * 1000
+			}
+
+			pos = 4
+		}
+	}
+
+	if len(args[pos-1:]) > 2 {
+		c.sendLine("-ERR syntax error\r\n")
+		return
+	}
+
+	// log.Println(pos)
+
+	if len(args[pos-1:]) == 2 {
+		switch args[pos] {
+		case "NX":
+			nx = true
+		case "XX":
+			xx = true
+		default:
+			c.sendLine("-ERR syntax error\r\n")
+			return
+		}
+	}
+
+	if !xx && !nx {
+		c.Sinr.lock.Lock()
+		c.Sinr.data[args[0]] = args[1]
+		c.Sinr.lock.Unlock()
+	} else if xx {
+		c.Sinr.lock.Lock()
+		_, found := c.Sinr.data[args[0]]
+		if found {
+			c.Sinr.data[args[0]] = args[1]
+		}
+		c.Sinr.lock.Unlock()
+	} else if nx {
+		c.Sinr.lock.Lock()
+		_, found := c.Sinr.data[args[0]]
+		if !found {
+			c.Sinr.data[args[0]] = args[1]
+		}
+		c.Sinr.lock.Unlock()
+	}
+	c.sendLine("+OK\r\n")
+
+	if cleanup {
+		go func(k string, duration int32) {
+			<-time.After(time.Duration(duration) * time.Millisecond)
+			c.Sinr.lock.Lock()
+			delete(c.Sinr.data, k)
+			c.Sinr.lock.Unlock()
+		}(args[0], duration)
+	}
+}
+
 func (c *client) Serve() {
-	log.Println("Accepted Connection: ", c.Conn.RemoteAddr().String())
+	// log.Println("Accepted Connection: ", c.Conn.RemoteAddr().String())
 	defer c.Conn.Close()
 
 	c.sendLine("+OK\r\n")
@@ -50,10 +139,10 @@ func (c *client) Serve() {
 		if err != nil {
 
 			if err == io.EOF {
-				log.Println("Closing Connection: ", c.Conn.RemoteAddr().String())
+				// log.Println("Closing Connection: ", c.Conn.RemoteAddr().String())
 				return
 			}
-			log.Println("ERROR: ", err)
+			// log.Println("ERROR: ", err)
 			continue
 		}
 
@@ -62,94 +151,8 @@ func (c *client) Serve() {
 			log.Println("GET Command")
 			c.sendLine("+OK\r\n")
 		case SET:
-			log.Println("SET Command", command.Args, len(command.Args))
-			if len(command.Args) < 2 {
-				c.sendLine("-ERR syntax error\r\n")
-				return
-			}
-
-			pos := 2
-			var timeErr error
-			var duration int32
-
-			nx := false
-			xx := false
-			cleanup := false
-
-			if len(command.Args) > 2 {
-				if command.Args[pos] == "EX" || command.Args[pos] == "PX" {
-
-					if len(command.Args) < 4 {
-						c.sendLine("-ERR syntax error\r\n")
-						return
-					}
-
-					cleanup = true
-					var d int64
-					d, timeErr = strconv.ParseInt(command.Args[pos+1], 10, 32)
-					if timeErr != nil {
-						c.sendLine("-ERR syntax error\r\n")
-						return
-					}
-					duration = int32(d)
-
-					if command.Args[pos] == "EX" {
-						duration = duration * 1000
-					}
-
-					pos = 4
-				}
-			}
-
-			if len(command.Args[pos-1:]) > 2 {
-				c.sendLine("-ERR syntax error\r\n")
-				return
-			}
-
-			log.Println(pos)
-
-			if len(command.Args[pos-1:]) == 2 {
-				switch command.Args[pos] {
-				case "NX":
-					nx = true
-				case "XX":
-					xx = true
-				default:
-					c.sendLine("-ERR syntax error\r\n")
-					return
-				}
-			}
-
-			if !xx && !nx {
-				c.Sinr.lock.Lock()
-				c.Sinr.data[command.Args[0]] = command.Args[1]
-				c.Sinr.lock.Unlock()
-			} else if xx {
-				c.Sinr.lock.Lock()
-				_, found := c.Sinr.data[command.Args[0]]
-				if found {
-					c.Sinr.data[command.Args[0]] = command.Args[1]
-				}
-				c.Sinr.lock.Unlock()
-			} else if nx {
-				c.Sinr.lock.Lock()
-				_, found := c.Sinr.data[command.Args[0]]
-				if !found {
-					c.Sinr.data[command.Args[0]] = command.Args[1]
-				}
-				c.Sinr.lock.Unlock()
-			}
-
-			if cleanup {
-				go func(k string, duration int32) {
-					<-time.After(time.Duration(duration) * time.Millisecond)
-					c.Sinr.lock.Lock()
-					delete(c.Sinr.data, k)
-					c.Sinr.lock.Unlock()
-				}(command.Args[0], duration)
-			}
-
-			c.sendLine("+OK\r\n")
+			// log.Println("SET Command", command.Args, len(command.Args))
+			processSetCommand(command.Args, c)
 		case QUIT:
 			log.Println("QUIT Command")
 			c.sendLine("+OK\r\n")
