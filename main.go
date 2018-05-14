@@ -124,6 +124,28 @@ func processSetCommand(args []string, c *client) {
 			c.Sinr.lock.Unlock()
 		}(args[0], duration)
 	}
+
+	// log.Println(c.Sinr.data)
+}
+
+func processGetCommand(args []string, c *client) {
+	if len(args) != 1 {
+		c.sendLine("-ERR syntax error\r\n")
+		return
+	}
+
+	c.Sinr.lock.RLock()
+	val, ok := c.Sinr.data[args[0]]
+	c.Sinr.lock.RUnlock()
+
+	// log.Println(c.Sinr.data, c.Sinr.data[args[0]], val, ok)
+
+	if ok {
+		fmt.Fprintf(c.Conn, "$%d\r\n%s\r\n", len(val), val)
+		return
+	}
+
+	fmt.Fprintf(c.Conn, "$-1\r\n")
 }
 
 func (c *client) Serve() {
@@ -148,8 +170,8 @@ func (c *client) Serve() {
 
 		switch command.ID {
 		case GET:
-			log.Println("GET Command")
-			c.sendLine("+OK\r\n")
+			// log.Println("GET Command")
+			processGetCommand(command.Args, c)
 		case SET:
 			// log.Println("SET Command", command.Args, len(command.Args))
 			processSetCommand(command.Args, c)
